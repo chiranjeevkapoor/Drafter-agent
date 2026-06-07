@@ -63,17 +63,75 @@ def our_agent(state: AgentState)->AgentState:
         user_input = "I'am ready to help you update a document, What would you like to create?"
         user_message = HumanMessage(content=user_input)
     else:
-        user_input = "What would you like to do with the document?"
+        user_input = input("What would you like to do with the document?")
         print(f"\n USER:{user_input}")
         user_message = HumanMessage(content=user_input)
 
-    all_messages = [system_prompt] + list(state["messages"]) + user_message
+    all_messages = [system_prompt] + list(state["messages"]) + [user_message]
 
     response = model.invoke(all_messages)
 
-    print(f"\n AI: {response.content}")
+    print(f"\n AI: {response.text}")
     if hasattr(response, "tool_calls") and response.tool_calls:
         print(f"USING TOOLS: {[tc['name'] for tc in response.tool_calls]}]")
 
-    return {"messages":list(state['messages'] + [user_message, response])}
+    return {"messages":list(state['messages']) + [user_message, response]}
 
+
+def should_continue(state: AgentState)->str:
+    """Determine if we should continue or end the conversation."""
+    messages = state['messages']
+
+    if not messages:
+        return "continue"
+    
+
+    for message in reversed(messages):
+        if isinstance(message, ToolMessage) and "saved" in message.content.lower() and "document" in message.content.lower():
+            return "end"
+    
+    return "continue"
+
+def print_messages(messages):
+    """Functions to print the messages in a readable format."""
+    if not messages:
+        return
+
+    for message in messages[-3:]:
+        if isinstance(message, ToolMessage):
+            print(f"\n TOOL RESULT: {message.content}")
+
+graph = StateGraph(AgentState)
+
+graph.add_node('our_agent',our_agent)
+graph.set_entry_point('our_agent')
+
+tool_node = ToolNode(tools=tools)
+graph.add_node("tools", tool_node)
+
+graph.add_edge("our_agent", "tools")
+
+graph.add_conditional_edges(
+    "tools",
+    should_continue,
+    {
+     "continue":"our_agent",
+     "end":END
+    }
+)
+
+app = graph.compile()
+
+
+def run_document_agent():
+    print("\n=======DRAFTER=======")
+    state = {"messages":[]}
+
+    for step in app.stream(state, stream_mode="values"):
+        if "messages" in step:
+            print_messages(step["messages"])
+    
+    print("\n=======DRAFTER FINISHED=======")
+
+if __name__=="__main__":
+    run_document_agent()
